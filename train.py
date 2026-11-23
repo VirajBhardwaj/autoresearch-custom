@@ -95,4 +95,16 @@ config = GPTConfig(vocab_size=tokenizer.get_vocab_size())
 model = GPT(config).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
 
-    
+BATCH_SIZE = 4
+train_loader = make_dataloader(tokenizer, BATCH_SIZE, MAX_SEQ_LEN, "train")
+
+for step in range(50):
+    t0 = time.time()
+    x, y, epoch = next(train_loader)
+    with autocast_ctx:
+        loss = model(x, y)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+    torch.cuda.synchronize()
+    print(f"step {step:03d} | loss: {loss.item():.4f} | dt: {(time.time() - t0)*1000:.0f}ms")
