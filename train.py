@@ -108,3 +108,11 @@ for step in range(50):
     optimizer.step()
     torch.cuda.synchronize()
     print(f"step {step:03d} | loss: {loss.item():.4f} | dt: {(time.time() - t0)*1000:.0f}ms")
+
+
+
+print("Running validation eval...")
+model.eval()
+with autocast_ctx:
+    val_bpb = evaluate_bpb(model, tokenizer, BATCH_SIZE)
+print(f"val_bpb: {val_bpb:.6f}")
