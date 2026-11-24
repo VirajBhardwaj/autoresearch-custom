@@ -66,6 +66,10 @@ class Block(nn.Module):
         x = x + self.mlp(norm(x))
         return x
 
+
+
+
+    
 class GPT(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -74,11 +78,33 @@ class GPT(nn.Module):
         self.h = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
+        head_dim = config.n_embd // config.n_head
+        cos, sin = self._precompute_rotary_embeddings(config.sequence_len * 10, head_dim)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
+
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=10000):
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32)
+        inv_freq = 1.0 / (base ** (channel_range / head_dim))
+        t = torch.arange(seq_len, dtype=torch.float32)
+        freqs = torch.outer(t, inv_freq)
+        # Shape: (1, 1, seq_len, head_dim // 2) for (B, n_head, T, d)
+        cos = freqs.cos().bfloat16()[None, None, :, :]
+        sin = freqs.sin().bfloat16()[None, None, :, :]
+        return cos, sin
+
     def forward(self, idx, targets=None, reduction="mean"):
+        B, T = idx.size()
+        cos_sin = (self.cos[:, :, :T], self.sin[:, :, :T])
+
         x = norm(self.wte(idx))
         for block in self.h:
-            x = block(x)
+            x = block(x, cos_sin)
+
+        softcap = 15
         logits = self.lm_head(norm(x)).float()
+        logits = softcap * torch.tanh(logits / softcap)
+
         if targets is not None:
             return F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
@@ -87,6 +113,8 @@ class GPT(nn.Module):
                 reduction=reduction,
             )
         return logits
+
+
 
 
 device = torch.device("cuda")
