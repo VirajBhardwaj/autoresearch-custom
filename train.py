@@ -15,9 +15,8 @@ class GPTConfig:
     n_head: int = 4;
     n_embd: int = 128;
 
-
 def norm(x):
-    return F.normalize(x, dim=-1)
+    return F.rms_norm(x, (x.size(-1),))
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
@@ -29,16 +28,20 @@ class CausalSelfAttention(nn.Module):
         self.c_v = nn.Linear(config.n_embd, config.n_embd, bias=False)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, cos_sin):
         B, T, C = x.shape
-        q = self.c_q(x).view(B,T,self.n_head,self.head_dim).transpose(1,2)
-        k = self.c_k(x).view(B,T,self.n_head,self.head_dim).transpose(1,2)
-        v = self.c_v(x).view(B,T,self.n_head,self.head_dim).transpose(1,2)
+        q = self.c_q(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = self.c_k(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = self.c_v(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
 
-        y = scaled_dot_product_attention(q, k, v,is_causal = True)
+        cos, sin = cos_sin
+        q = apply_rotary_emb(q, cos, sin)
+        k = apply_rotary_emb(k, cos, sin)
+        q, k = norm(q), norm(k)
+
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-        y = self.c_proj(y)
-        return y
+        return self.c_proj(y)
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -52,15 +55,14 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         return x
 
-    
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.attn = CausalSelfAttention(config)
         self.mlp = MLP(config)
 
-    def forward(self, x):
-        x = x + self.attn(norm(x))
+    def forward(self, x, cos_sin):
+        x = x + self.attn(norm(x), cos_sin)
         x = x + self.mlp(norm(x))
         return x
 
